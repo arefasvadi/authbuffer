@@ -125,12 +125,6 @@ void print_hex(const uint8_t *v, const size_t len, const char *msg);
 void get_merkle_neighbors(const Buffer *buf, size_t block_idx,
                           MKNode **neighbors, size_t *neighbors_size,
                           BufferStatus *status);
-size_t get_sibling_idx(size_t idx, size_t nleafs, BufferStatus *status);
-
-size_t find_sibling_end(size_t counts, size_t idx, size_t span_start);
-
-size_t find_parent_idx(size_t idx, size_t nleafs, BufferStatus *status);
-
 static void destroy_buffer_block_data(BufferBlock *block) {
   if (block == NULL) {
     return;
@@ -346,199 +340,52 @@ static void make_MkTree(Buffer *buf, BufferStatus *status, const uint8_t *key) {
       return;
     }
   }
-  // build the rest of the merkle tree
-  size_t q_size = total_blocks;
-  size_t *ind_q = (size_t *)malloc(q_size * sizeof(size_t));
-  for (size_t i = 0; i < total_blocks; ++i) {
-    ind_q[i] = tree_nnodes - total_blocks + i;
-  }
-  size_t idx = tree_nnodes - total_blocks - 1;
-  *status = Ok;
 
-  while (q_size > 1) {
-    size_t q_idx = 0;
-    size_t new_q_size = 0;
-    // we probably need half this space, however C doesn't have queue in
-    // standard library, plus this is contiguous (as oposed to deque/linked
-    // list)
-    size_t *new_ind_q = (size_t *)malloc(q_size * sizeof(size_t));
-
-    // Odd size is a sepcial case where we promote the first item to the next
-    // level
-    if (q_size & 1) {
-      new_ind_q[0] = ind_q[0];
-      new_q_size = 1;
-      q_idx += 1;
-      q_size -= 1;
+  for (size_t idx = tree_nnodes - total_blocks - 1; idx > 0; idx--) {
+    memcpy(stash, tree->nodes[2 * idx + 1].sha, SHA256_SIZE_BYTES);
+    memcpy(stash + SHA256_SIZE_BYTES, tree->nodes[2 * idx + 2].sha,
+           SHA256_SIZE_BYTES);
+    compute_sha256(stash, 2 * SHA256_SIZE_BYTES, tree->nodes[idx].sha, status);
+    if (*status != Ok) {
+      return;
     }
-
-    for (size_t i = q_idx; i < q_size; i += 2) {
-      memcpy(stash, tree->nodes[ind_q[i]].sha, SHA256_SIZE_BYTES);
-      memcpy(stash + SHA256_SIZE_BYTES, tree->nodes[ind_q[i + 1]].sha,
-             SHA256_SIZE_BYTES);
-      compute_sha256(stash, 2 * SHA256_SIZE_BYTES, tree->nodes[idx].sha,
-                     status);
-      if (*status != Ok) {
-        free(new_ind_q);
-        free(ind_q);
-        return;
-      }
-      new_ind_q[new_q_size++] = idx--;
-    }
-    free(ind_q);
-    ind_q = new_ind_q;
-    q_size = new_q_size;
   }
-  free(ind_q);
 }
 
 void get_merkle_neighbors(const Buffer *buf, size_t block_idx,
                           MKNode **neighbors, size_t *neighbors_size,
                           BufferStatus *status) {
-  if (buf == NULL || buf->tree == NULL ||
-      block_idx >= buf->meta_data.n_blocks) {
+  const size_t total_blocks = buf->meta_data.n_blocks;
+  if (block_idx >= total_blocks) {
     *status = InvalidBufferIndex;
-    return;
+  }
+  const size_t tree_nnodes = buf->tree->n_nodes;
+  size_t tree_idx = tree_nnodes - total_blocks + block_idx;
+  size_t levels = 0;
+  while ((1 << levels) < total_blocks) {
+    levels++;
   }
 
-  size_t tree_size = buf->tree->n_nodes;
-  size_t leaf_start_idx = tree_size - buf->meta_data.n_blocks;
-  size_t current_idx = leaf_start_idx + block_idx;
-
-  // Determine the level of the current block and its position in that level
-  size_t level = 0, level_size = 1;
-  while (level_size * 2 <= tree_size) {
-    level_size *= 2;
-    level++;
-  }
-
-  // Determine the actual level size and the block's position in that level
-  size_t actual_level_size = (tree_size - (level_size / 2)) / level_size;
-  size_t block_pos = block_idx - (leaf_start_idx - actual_level_size);
-
-  *neighbors = (MKNode *)malloc(
-      level * sizeof(MKNode)); // Allocate with the maximum possible size
+  *neighbors = (MKNode *)malloc(sizeof(MKNode) * (levels));
   if (*neighbors == NULL) {
     *status = AllocationError;
     return;
   }
 
   size_t neighbor_idx = 0;
-  while (current_idx > 0 && level > 0) {
-    size_t parent_level_size = actual_level_size / 2;
-    size_t parent_pos = block_pos / 2;
-
-    // Check if the block has a neighbor in the same level
-    if (actual_level_size % 2 == 0 || block_pos > 0) {
-      size_t sibling_pos = (block_pos % 2 == 0) ? block_pos + 1 : block_pos - 1;
-      size_t sibling_idx = leaf_start_idx - actual_level_size + sibling_pos;
-      if (sibling_idx < tree_size) {
-        printf("sibling index: %zu\n", sibling_idx);
-        (*neighbors)[neighbor_idx++] = buf->tree->nodes[sibling_idx];
-      }
+  while (tree_idx > 0) {
+    size_t sibling_idx;
+    if (tree_idx % 2 == 0) {
+      sibling_idx = tree_idx - 1;
+    } else {
+      sibling_idx = tree_idx + 1;
     }
 
-    // Move up to the parent level
-    current_idx = (leaf_start_idx - parent_level_size) + parent_pos;
-    leaf_start_idx -= actual_level_size;
-    actual_level_size = parent_level_size;
-    block_pos = parent_pos;
-    level--;
+    (*neighbors)[neighbor_idx++] = buf->tree->nodes[sibling_idx];
+    tree_idx = (tree_idx - 1) / 2;
   }
-
-  *neighbors_size = neighbor_idx; // Set the actual size of the neighbors array
+  *neighbors_size = neighbor_idx;
   *status = Ok;
-}
-
-void get_neighbors(Buffer *buffer, size_t leaf_block, MKNode **neighbors,
-                   int *neighbors_len, BufferStatus *status) {
-  if (buffer == NULL) {
-    *status = InvalidBufferIndex;
-    return;
-  }
-  size_t nb = buffer->meta_data.n_blocks;
-  MkTree *tree = buffer->tree;
-  if (tree == NULL || tree->nodes == NULL || neighbors == NULL ||
-      neighbors_len == NULL) {
-    *status = InvalidBufferIndex;
-    return;
-  }
-  size_t nn = tree->n_nodes;
-  if (leaf_block >= nb) {
-    *status = InvalidBufferIndex;
-    return;
-  }
-  size_t idx = nn - nb + leaf_block;
-  while (idx > 1) {
-  }
-}
-
-size_t get_sibling_idx(size_t idx, size_t nleafs, BufferStatus *status) {
-  size_t nnodes = count_mk_tree_len(nleafs);
-  if (idx >= nnodes || idx == 0) {
-    *status = NeighborNotFound;
-    return nnodes + 1;
-  }
-  size_t span_start = nnodes - nleafs;
-  size_t span_end = nnodes;
-  const size_t no_carry = nnodes + 1;
-  size_t carry = (nleafs & 1) == 1 ? span_start : no_carry;
-  uint8_t moved_span_start = carry != no_carry;
-  if (moved_span_start) {
-    span_start += 1;
-  }
-  size_t counts = span_end - span_start;
-  while (!(idx >= span_start && idx < span_end || idx == carry)) {
-    size_t moved_span = 0;
-    if ((counts & 1) == 1 && carry != no_carry) {
-      carry = no_carry;
-      span_end--;
-      counts++;
-    } else if ((counts & 1) == 1) {
-      carry = --span_end;
-      moved_span = 1;
-    }
-    span_end = span_start - moved_span_start;
-    span_start = span_end - (counts / 2);
-    counts = span_end - span_start;
-    moved_span_start = 0;
-  }
-  *status = Ok;
-  if (carry == idx) {
-    return find_sibling_end(counts, idx, span_start) - 1;
-  }
-  if ((counts & 1) == 1 && idx == span_end - 1) {
-    return carry != no_carry ? carry
-                             : find_sibling_end(--counts, idx, span_start) - 1;
-  }
-  for (size_t i = span_start; i < span_end; i += 2) {
-    if (idx == i) {
-      return i + 1;
-    } else if (idx == i + 1) {
-      return i;
-    }
-  }
-  *status = NeighborNotFound;
-  return no_carry;
-}
-
-size_t find_sibling_end(size_t counts, size_t idx, size_t span_start) {
-  size_t span_end;
-  while (!(counts & 1)) {
-    counts /= 2;
-    span_end = (idx != span_start - 1) ? span_start : span_start - 1;
-    span_start = span_end - counts;
-  }
-  return span_end;
-}
-
-size_t find_parent_idx(size_t idx, size_t nleafs, BufferStatus *status) {
-  size_t nnodes = count_mk_tree_len(nleafs);
-  size_t sib_idx = get_sibling_idx(idx, nleafs, status);
-  if (*status != Ok) {
-    return nnodes + 1;
-  }
-  return 0;
 }
 
 void test_single_block() {
@@ -646,250 +493,6 @@ void test_verification_path() {
   assert(buf->meta_data.n_block_elems == 3);
   assert(buf->meta_data.block_pad_size == 4096 - (3 * 300 * sizeof(float)));
   assert(buf->meta_data.last_block_n_elems == 1);
-
-  size_t sib;
-
-  /** 5 leaves **/
-  sib = get_sibling_idx(4, 5, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 1);
-
-  sib = get_sibling_idx(5, 5, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 6);
-
-  sib = get_sibling_idx(6, 5, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 5);
-
-  sib = get_sibling_idx(7, 5, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 8);
-
-  sib = get_sibling_idx(8, 5, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 7);
-
-  sib = get_sibling_idx(2, 5, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 3);
-
-  sib = get_sibling_idx(3, 5, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 2);
-
-  sib = get_sibling_idx(1, 5, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 4);
-
-  sib = get_sibling_idx(0, 5, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == NeighborNotFound);
-  assert(sib == 10);
-
-  /** 6 leaves **/
-  sib = get_sibling_idx(4, 6, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 1);
-
-  sib = get_sibling_idx(1, 6, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 4);
-
-  sib = get_sibling_idx(7, 6, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 8);
-
-  sib = get_sibling_idx(8, 6, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 7);
-
-  sib = get_sibling_idx(5, 6, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 6);
-
-  sib = get_sibling_idx(6, 6, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 5);
-
-  sib = get_sibling_idx(9, 6, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 10);
-
-  sib = get_sibling_idx(10, 6, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 9);
-
-  sib = get_sibling_idx(2, 6, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 3);
-
-  sib = get_sibling_idx(3, 6, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 2);
-
-  /** 9 leaves **/
-  sib = get_sibling_idx(8, 9, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 1);
-
-  sib = get_sibling_idx(1, 9, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 8);
-
-  sib = get_sibling_idx(3, 9, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 2);
-
-  sib = get_sibling_idx(2, 9, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 3);
-
-  sib = get_sibling_idx(7, 9, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 6);
-
-  sib = get_sibling_idx(6, 9, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 7);
-
-  sib = get_sibling_idx(5, 9, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 4);
-
-  sib = get_sibling_idx(4, 9, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 5);
-
-  /** 10 leaves **/
-  sib = get_sibling_idx(1, 10, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 8);
-
-  sib = get_sibling_idx(8, 10, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 1);
-
-  /** 11 leaves **/
-  sib = get_sibling_idx(10, 11, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 9);
-
-  sib = get_sibling_idx(9, 11, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 10);
-
-  sib = get_sibling_idx(4, 11, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 1);
-
-  sib = get_sibling_idx(1, 11, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 4);
-
-  sib = get_sibling_idx(2, 11, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 3);
-
-  sib = get_sibling_idx(3, 11, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 2);
-
-  sib = get_sibling_idx(6, 11, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 5);
-
-  sib = get_sibling_idx(5, 11, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 6);
-
-  sib = get_sibling_idx(8, 11, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 7);
-
-  sib = get_sibling_idx(7, 11, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 8);
-
-  /** 12 leaves **/
-  sib = get_sibling_idx(4, 12, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 1);
-
-  sib = get_sibling_idx(1, 12, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 4);
-
-  sib = get_sibling_idx(2, 12, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 3);
-
-  sib = get_sibling_idx(3, 12, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 2);
-
-  sib = get_sibling_idx(11, 12, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 12);
-
-  sib = get_sibling_idx(12, 12, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 11);
-
-  /** 2 leaves **/
-  sib = get_sibling_idx(1, 2, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 2);
-
-  sib = get_sibling_idx(2, 2, &status);
-  // printf("sib: %zu\n", sib);
-  assert(status == Ok);
-  assert(sib == 1);
 
   MKNode *neighbors = NULL;
   size_t neighbors_size = 0;
