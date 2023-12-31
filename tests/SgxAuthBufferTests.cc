@@ -220,6 +220,9 @@ TEST(SgxAuthBufferCustomCalculationTest,
   EXPECT_EQ(a._n_elems_last_block, 6);
   EXPECT_EQ(a._last_block_padding_size_bytes, 2);
   EXPECT_TRUE(a._last_fully_occupied);
+  { const auto view = a.getSegment(8, 10); }
+  { const auto view = a.getSegment(3, 5); }
+  { const auto view = a.getSegment(5, 6); }
 }
 
 TEST(SgxAuthBufferCustomCalculationTest, single_block_with_padding) {
@@ -235,6 +238,9 @@ TEST(SgxAuthBufferCustomCalculationTest, single_block_with_padding) {
   EXPECT_EQ(a._n_elems_last_block, 5);
   EXPECT_EQ(a._last_block_padding_size_bytes, 7);
   EXPECT_FALSE(a._last_fully_occupied);
+  { const auto view = a.getSegment(2, 3); }
+  { const auto view = a.getSegment(1, 4); }
+  { const auto view = a.getSegment(0, 4); }
 }
 
 TEST(SgxAuthBufferCustomCalculationTest,
@@ -251,4 +257,8 @@ TEST(SgxAuthBufferCustomCalculationTest,
   EXPECT_EQ(a._n_elems_last_block, 6);
   EXPECT_EQ(a._last_block_padding_size_bytes, 2);
   EXPECT_TRUE(a._last_fully_occupied);
+  {
+    auto view = a.getSegment(2, 5);
+    view[2] = custom{{1, 2, 3, 4, 5}};
+  }
 }

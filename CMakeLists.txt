@@ -38,8 +38,6 @@ endfunction()
 
 file(GLOB_RECURSE HEADERS "include/*.h")
 file(GLOB_RECURSE LIB_SOURCES "src/*.cc")
-file(GLOB_RECURSE MAIN_SOURCE "src/main.cc")
-list(REMOVE_ITEM LIB_SOURCES ${MAIN_SOURCE})
 
 
 add_library(untrusted STATIC 
@@ -65,7 +63,6 @@ set_project_default_compile_options(bridge)
 
 add_library(tee STATIC 
 ${CMAKE_CURRENT_SOURCE_DIR}/src/SgxAuthBuffer.cc
-${CMAKE_CURRENT_SOURCE_DIR}/src/segment.cc
 )
 target_include_directories(tee PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
