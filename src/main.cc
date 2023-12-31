@@ -1,16 +1,73 @@
-#include <cassert>
-#include <cstdint>
-#include <cstdlib>
-#include <m-lib/m-array.h>
-#include <m-lib/m-buffer.h>
+/**
+ *                            sgx lib
+ *
+ * For a given buffer wrapper:
+ * Root of the Merkle tree is always stored in enclave.
+ *
+ *Other metadata to store in enclave:
+ * total number of elements
+ * size of each element
+ *
+ * Instantiation:
+ * Sgx program requests for an authenticated buffer.
+ * 1. default initialize the entire range with 0 or one single value.
+ * 2. default initialize the entire range with an entire buffer of the same size
+ * During initialization, the merkle tree should be created in a bottom up
+ * fashion.
+ * First, all the necessary buffers for the tree, blocks and the metadata should
+ * be created outside of the enclave.
+ * Second, the bottom level blocks will be generated one by one; the necessary
+ * data will be put in the data, with the necessary paddings, and the sha256 for
+ * the block will be computed. The block info (content/sha) will be flushed to
+ * outside, but the sha256 will be kept. So by the end of processing the leaves,
+ * we will have all the corresponding leaf shas. Third, we will build the rest
+ * of the merkle hashes level by level and flush the older level outside, until
+ * we hit the root sha. Finally, we keep the root hash, plus flushing it
+ * outside.
+ *
+ * Fetch:
+ * Sgx program requests for an index or more generally a range of contiguous
+ * indices.
+ * First, the indices should be mapped to the leaf blocks (content/sha) we will
+ * need to be pulled in into the sgx. Additionally, the neighbors of such blocks
+ * should be calcualted so that their shas pulled in as well, to enable
+ * verification/authentication of the block(s) in question.
+ * There are some optimization oppurtunities, when dealing with range of blocks
+ * that we will need to pull in into the enclave, in terms of pakcing the
+ * neighbor shas, and doing less verifications, instead of having them come to
+ * enclave separately (may be implemented later).
+ *
+ * Update:
+ * Sgx program updates an index or a range of contiguous indices.
+ * First, it should recalculate all the shas of the blocks and bubble up to the
+ * root. Then, all the updated hashes (blocks, neighbors, and root) will be
+ * updated, and flushed, but only the root will be kept in enclave.
+ *
+ * Snapshot:
+ * Sgx program requests an snapshot of the buffer, in additon to the merkle
+ * tree. The snapshot will be stored outside alongside the cmaced hash with
+ * timestamp of the root.
+ *
+ *
+ *                            non-sgx lib
+ */
+
 #include <openssl/aes.h>
 #include <openssl/cmac.h>
 #include <openssl/evp.h>
 #include <openssl/sha.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
+
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
+#include <memory>
+#include <unordered_map>
+#include <vector>
+
+using namespace std;
 
 #define SHA256_SIZE_BYTES (32)
 #define CMAC_SIZE_BYTES (16)
@@ -40,12 +97,6 @@ enum BufferStatus {
   Sha256FinalError = 11,
   NeighborNotFound = 12,
 };
-
-typedef struct {
-  size_t n_bytes;
-  size_t elem_size;
-  void *data;
-} Range;
 
 typedef struct {
   uint8_t hash[SHA256_SIZE_BYTES];
@@ -83,9 +134,33 @@ typedef struct {
 
 typedef struct {
   BufferMeta meta_data;
-  BufferBlock *blocks; // an array of blocks
-  MkTree *tree;        // merkle tree of the buffer
+  BufferBlock *blocks;  // an array of blocks
+  MkTree *tree;         // merkle tree of the buffer
 } Buffer;
+
+typedef struct {
+  size_t n_elems;
+  size_t elem_size;
+} RealBufferMeta;
+
+typedef struct {
+  size_t start;
+  size_t end;
+} RangeGetRequest;
+
+typedef struct {
+} RangeGetResponse;
+
+typedef struct {
+  size_t *block_idxs;
+  size_t n;
+} MatchingBlocksRange;
+
+typedef struct {
+  size_t n_bytes;
+  size_t elem_size;
+  void *data;
+} Range;
 
 /**
  * variables and globals
@@ -125,6 +200,7 @@ void print_hex(const uint8_t *v, const size_t len, const char *msg);
 void get_merkle_neighbors(const Buffer *buf, size_t block_idx,
                           MKNode **neighbors, size_t *neighbors_size,
                           BufferStatus *status);
+
 static void destroy_buffer_block_data(BufferBlock *block) {
   if (block == NULL) {
     return;
@@ -386,6 +462,32 @@ void get_merkle_neighbors(const Buffer *buf, size_t block_idx,
   }
   *neighbors_size = neighbor_idx;
   *status = Ok;
+}
+
+inline size_t get_block_idx(BufferMeta *buf_meta, size_t item_idx) {
+  assert(item_idx < buf_meta->n_elems);
+  return item_idx / buf_meta->n_block_elems;
+}
+
+MatchingBlocksRange get_blocks_range_inclusive_idx(BufferMeta *buf_meta,
+                                                   size_t item_start_idx,
+                                                   size_t item_end_idx,
+                                                   BufferStatus *status) {
+  assert(item_start_idx <= item_end_idx);
+  assert(item_end_idx < buf_meta->n_elems);
+  size_t start_block_idx = get_block_idx(buf_meta, item_start_idx);
+  size_t end_block_idx = get_block_idx(buf_meta, item_end_idx);
+  size_t total_blocks = end_block_idx - start_block_idx + 1;
+  size_t *block_idxs = (size_t *)malloc(total_blocks * sizeof(size_t));
+  if (block_idxs == NULL) {
+    *status = AllocationError;
+    return {.block_idxs = NULL, .n = 0};
+  }
+  *status = Ok;
+  return {
+      .block_idxs = block_idxs,
+      .n = total_blocks,
+  };
 }
 
 void test_single_block() {

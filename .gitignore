@@ -1,0 +1,4 @@
+.cache/clangd/index
+.vscode
+build
+compile_commands.json
