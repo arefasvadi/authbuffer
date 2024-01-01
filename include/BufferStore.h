@@ -45,7 +45,7 @@ struct AuthBufferStore {
     Inner _inner;
     SnapshotMeta _meta;
     Cmac128 _root_cmac{};
-    explicit Snapshot(SnapshotMeta meta, const Inner &inner,
+    explicit Snapshot(const SnapshotMeta &meta, const Inner &inner,
                       const uint8_t *root_cmac);
   };
 

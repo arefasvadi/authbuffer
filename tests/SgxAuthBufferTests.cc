@@ -58,6 +58,41 @@ TEST(SgxAuthBufferFloatCalculationTest,
     EXPECT_EQ(std::memcmp(first_sha.sha, a._root_sha.sha, sizeof(Sha256)), 0);
     ASSERT_DEBUG_DEATH({ auto view = a.getSegment(3, 32); }, "");
   }
+  {
+    auto first_sha = a._root_sha;
+    // .ts = 1
+    a.saveSnapshot(SnapshotMeta{1});
+    EXPECT_EQ(AuthBufferStore::lookup_snapshot_table.count(0), 1);
+    EXPECT_EQ(AuthBufferStore::lookup_snapshot_table[0].count({1}), 1);
+    {
+      auto view = a.getSegment(11, 20);
+      view[13] = 4.0;
+    }
+    auto second_sha = a._root_sha;
+    a.saveSnapshot(SnapshotMeta{2});
+    EXPECT_EQ(AuthBufferStore::lookup_snapshot_table[0].count({2}), 1);
+    EXPECT_NE(std::memcmp(&AuthBufferStore::lookup_snapshot_table[0]
+                               .at({1})
+                               ._inner._mk_tree[0],
+                          &AuthBufferStore::lookup_snapshot_table[0]
+                               .at({2})
+                               ._inner._mk_tree[0],
+                          sizeof(Sha256)),
+              0);
+
+    EXPECT_EQ(std::memcmp(first_sha.sha,
+                          &AuthBufferStore::lookup_snapshot_table[0]
+                               .at({1})
+                               ._inner._mk_tree[0],
+                          sizeof(Sha256)),
+              0);
+    EXPECT_EQ(std::memcmp(second_sha.sha,
+                          &AuthBufferStore::lookup_snapshot_table[0]
+                               .at({2})
+                               ._inner._mk_tree[0],
+                          sizeof(Sha256)),
+              0);
+  }
 }
 
 TEST(SgxAuthBufferFloatCalculationTest, full_blocks_no_padding_no_last_block) {

@@ -21,7 +21,8 @@ AuthBufferStore::Inner::Inner(const size_t buff_id, const size_t n_elems,
       _elem_size{elem_size},
       _block_size_bytes{block_size_bytes} {};
 
-AuthBufferStore::Snapshot::Snapshot(SnapshotMeta meta, const Inner &inner,
+AuthBufferStore::Snapshot::Snapshot(const SnapshotMeta &meta,
+                                    const Inner &inner,
                                     const uint8_t *root_cmac)
     : _inner{inner}, _meta{meta} {
   std::memmove(this->_root_cmac.cmac, root_cmac, CMAC_SIZE_BYTES);
