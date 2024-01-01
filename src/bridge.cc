@@ -141,3 +141,28 @@ void persist_snapshot(const size_t buff_id, const SnapshotMeta &meta,
   auth_buffer_snapshots.emplace(
       std::make_pair(meta, AuthBufferStore::Snapshot{meta, auth_buffer, cmac}));
 }
+
+void load_snapshot(const size_t buff_id, const SnapshotMeta &meta,
+                   Cmac128 *cmac, Sha256 *root_sha) {
+  if (!AuthBufferStore::keyExists(buff_id,
+                                  AuthBufferStore::lookup_snapshot_table)) {
+    throw std::runtime_error(
+        (boost::format("Buffer with id %1% not found in the snapshot table.") %
+         buff_id)
+            .str());
+  }
+  if (!AuthBufferStore::keyExists(
+          meta, AuthBufferStore::lookup_snapshot_table[buff_id])) {
+    throw std::runtime_error(
+        (boost::format("Buffer with id %1% and meta %2% not found in the "
+                       "snapshot table.") %
+         buff_id % meta.ts)
+            .str());
+  }
+  auto &snapshot = AuthBufferStore::lookup_snapshot_table.at(buff_id).at(meta);
+  std::memmove((uint8_t *)cmac->cmac, snapshot._root_cmac.cmac,
+               sizeof(Cmac128));
+  std::memmove((uint8_t *)root_sha->sha, &snapshot._inner._mk_tree[0],
+               sizeof(Sha256));
+  AuthBufferStore::lookup_table.at(buff_id) = snapshot._inner;
+}

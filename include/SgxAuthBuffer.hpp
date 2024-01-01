@@ -174,7 +174,7 @@ struct SgxAuthBuffer : private virtual SgxAuthBufferBase {
 
     TItemContainer _segment_items{};
     TIdContainer _neighbor_node_ids{};
-    TIdContainer _parent_node_ids{};
+    // TIdContainer _parent_node_ids{};
 
     explicit Segment(TAuthBuffer& auth_buffer, const size_t start_idx,
                      const size_t end_idx)
@@ -193,8 +193,8 @@ struct SgxAuthBuffer : private virtual SgxAuthBufferBase {
              _start_idx <= _end_idx);
       assert(_block_end_id < _auth_buffer._n_blocks);
       // claculate the necessary neighbor ids to bring in their Sha256s for
-      // verification, in addition to the parent indices that could be updated
-      this->calculate_merkle_neighbors_and_parents();
+      // verification.
+      this->calculate_merkle_neighbors();
       // bring in the blocks in scope, plus the neighbor Sha256s that are in
       // scope for verification
       PulledBlocks pb = pull_blocks(
@@ -208,6 +208,8 @@ struct SgxAuthBuffer : private virtual SgxAuthBufferBase {
       // make a contigouous buffer from the items in range. Effectively,
       // eliminating the paddings and the block boundaries.
       this->fillContiguous(pb.blocks);
+
+      this->_auth_buffer._lingering_segments++;
     }
 
     TShaContainer getUpdatedShas() { return {}; }
@@ -247,6 +249,9 @@ struct SgxAuthBuffer : private virtual SgxAuthBufferBase {
       // write back to bufferstore
       push_blocks(this->_auth_buffer._id, std::move(psb), this->_block_start_id,
                   this->_block_end_id);
+      if (this->_auth_buffer._lingering_segments > 0) {
+        this->_auth_buffer._lingering_segments--;
+      }
     }
 
    private:
@@ -432,7 +437,7 @@ struct SgxAuthBuffer : private virtual SgxAuthBufferBase {
                          SHA256_SIZE_BYTES) == 0;
     }
 
-    void calculate_merkle_neighbors_and_parents() {
+    void calculate_merkle_neighbors() {
       const size_t start_block_id = this->_block_start_id;
       const size_t end_block_id = this->_block_end_id;
       assert(start_block_id <= end_block_id);
@@ -456,7 +461,7 @@ struct SgxAuthBuffer : private virtual SgxAuthBufferBase {
             this->_neighbor_node_ids.insert(neighbor_id);
           }
           current_node_id = (current_node_id - 1) / 2;
-          this->_parent_node_ids.insert(current_node_id);
+          // this->_parent_node_ids.insert(current_node_id);
         }
       }
     }
@@ -473,6 +478,7 @@ struct SgxAuthBuffer : private virtual SgxAuthBufferBase {
   size_t _last_block_padding_size_bytes{};
   size_t _n_tree_nodes{};
   bool _last_fully_occupied{false};
+  size_t _lingering_segments{0};
 
   explicit SgxAuthBuffer(
       const size_t n_elems,
@@ -512,11 +518,40 @@ struct SgxAuthBuffer : private virtual SgxAuthBufferBase {
   }
 
   void saveSnapshot(const SnapshotMeta& meta) {
+    if (this->_lingering_segments != 0) {
+      throw std::runtime_error(
+          "you have lingering segments. make sure they are flushed first via "
+          "destructor when they exit their scope.");
+    }
     CmacContent a{this->_root_sha, meta};
     auto [cmac, success] =
         calculate_cmac128((const uint8_t*)&a, sizeof(CmacContent));
     assert(success);
     persist_snapshot(this->_id, meta, (const uint8_t*)&cmac);
+  }
+
+  void loadSnapshot(const SnapshotMeta& meta) {
+    if (this->_lingering_segments != 0) {
+      throw std::runtime_error(
+          "you have lingering segments. make sure they are flushed first via "
+          "destructor when they exit their scope.");
+    }
+    Sha256 temp_sha;
+    Cmac128 temp_cmac;
+    load_snapshot(this->_id, meta, &temp_cmac, &temp_sha);
+    CmacContent a{temp_sha, meta};
+    auto [verified_cmac, is_success] =
+        calculate_cmac128((const uint8_t*)&a, sizeof(CmacContent));
+    assert(is_success);
+    if (std::memcmp(&temp_cmac.cmac, &verified_cmac.cmac, sizeof(Cmac128)) !=
+        0) {
+      throw std::runtime_error(
+          "could not verify the autheticity of the snapshot!");
+    }
+    // no need to reverify the blocks. if sends the wrong blocks, the root sha
+    // will not match and we already verified the cmac over the root sha256 of
+    // the snapshot.
+    this->_root_sha = temp_sha;
   }
 
  private:

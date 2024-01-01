@@ -30,15 +30,19 @@ struct AuthBufferStore {
     TBytes _content{};
     TMerkletTree _mk_tree{};
 
-    const size_t _buff_id{};
-    const size_t _n_elems{};
-    const size_t _n_blocks{};
-    const size_t _elem_size{};
-    const size_t _block_size_bytes{};
+    size_t _buff_id{};
+    size_t _n_elems{};
+    size_t _n_blocks{};
+    size_t _elem_size{};
+    size_t _block_size_bytes{};
 
-    explicit Inner(const size_t buff_id, const size_t n_elems,
-                   const size_t n_blocks, const size_t elem_size,
-                   const size_t block_size_bytes);
+    explicit Inner(size_t buff_id, size_t n_elems, size_t n_blocks,
+                   size_t elem_size, size_t block_size_bytes);
+    Inner(const Inner &);
+    Inner &operator=(const Inner &);
+
+    Inner(Inner &&) noexcept;
+    Inner &operator=(Inner &&) noexcept;
   };
 
   struct Snapshot {

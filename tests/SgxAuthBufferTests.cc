@@ -59,6 +59,15 @@ TEST(SgxAuthBufferFloatCalculationTest,
     ASSERT_DEBUG_DEATH({ auto view = a.getSegment(3, 32); }, "");
   }
   {
+    auto& f = AuthBufferStore::lookup_table.at(0)._content[32];
+    auto before = f;
+    f = 47;
+    // should throw because will not match the root sha that is kept in enclave.
+    EXPECT_ANY_THROW({ auto view = a.getSegment(8, 11); });
+    f = before;
+    { auto view = a.getSegment(8, 11); }
+  }
+  {
     auto first_sha = a._root_sha;
     // .ts = 1
     a.saveSnapshot(SnapshotMeta{1});
@@ -92,6 +101,37 @@ TEST(SgxAuthBufferFloatCalculationTest,
                                ._inner._mk_tree[0],
                           sizeof(Sha256)),
               0);
+    {
+      auto view = a.getSegment(4, 12);
+      view[8] = 4.5;
+    }
+    a.saveSnapshot(SnapshotMeta{3});
+    // loading the snapshot 1
+    a.loadSnapshot(SnapshotMeta{1});
+
+    // messing with snapshot two and expecting failure
+    {
+      auto& ref =
+          AuthBufferStore::lookup_snapshot_table[0].at({2})._inner._content[32];
+      auto before = ref;
+      // messing with the first byte of the second block
+      ref = 3;
+      a.loadSnapshot(SnapshotMeta{2});
+      {
+        // block 2 is included
+        EXPECT_ANY_THROW({ auto view = a.getSegment(3, 11); });
+        EXPECT_ANY_THROW({ auto view = a.getSegment(8, 11); });
+        EXPECT_ANY_THROW({ auto view = a.getSegment(4, 19); });
+        ref = before;
+        a.loadSnapshot(SnapshotMeta{2});
+        // we do not expect any throw since it mathes the initial content
+        { auto view = a.getSegment(3, 11); };
+        { auto view = a.getSegment(8, 11); };
+        { auto view = a.getSegment(4, 19); };
+      }
+    }
+
+    a.loadSnapshot(SnapshotMeta{3});
   }
 }
 

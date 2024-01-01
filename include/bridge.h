@@ -53,3 +53,6 @@ void pull_raw_neighbor_shas_from_buffer_store(
 
 void persist_snapshot(const size_t buff_id, const SnapshotMeta &meta,
                       const uint8_t *cmac);
+
+void load_snapshot(const size_t buff_id, const SnapshotMeta &meta,
+                   Cmac128 *cmac, Sha256 *root_sha);
