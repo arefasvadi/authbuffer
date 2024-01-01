@@ -28,14 +28,24 @@ TEST(SgxAuthBufferFloatCalculationTest,
   EXPECT_EQ(a._last_block_padding_size_bytes, 12);
   EXPECT_FALSE(a._last_fully_occupied);
 
+  // check whether an empty corresponding buffer is created.
   EXPECT_TRUE(AuthBufferStore::keyExists(0, AuthBufferStore::lookup_table));
+  EXPECT_EQ(AuthBufferStore::lookup_table.at(0)._content.size(), (3 * 32));
+  EXPECT_EQ(AuthBufferStore::lookup_table.at(0)._mk_tree.size(), (5));
+  EXPECT_EQ(AuthBufferStore::lookup_table.at(0)._n_elems, (21));
+
+  // check whether a proper segement can be pulled in from buffer store and
+  // verified.
   {
     auto first_sha = a._root_sha;
     {
       EXPECT_EQ(std::memcmp(first_sha.sha, a._root_sha.sha, sizeof(Sha256)), 0);
       auto view = a.getSegment(3, 18);
+      // we don't expect any change unless the view goes out of scope so the
+      // write to bufferstore happens
       EXPECT_EQ(std::memcmp(first_sha.sha, a._root_sha.sha, sizeof(Sha256)), 0);
     }
+    // after going out of scope write happens
     EXPECT_EQ(std::memcmp(first_sha.sha, a._root_sha.sha, sizeof(Sha256)), 0);
   }
   {
@@ -53,18 +63,23 @@ TEST(SgxAuthBufferFloatCalculationTest,
     }
     EXPECT_EQ(std::memcmp(first_sha.sha, a._root_sha.sha, sizeof(Sha256)), 0);
   }
+  // invalid indices requested
   {
     auto first_sha = a._root_sha;
     EXPECT_EQ(std::memcmp(first_sha.sha, a._root_sha.sha, sizeof(Sha256)), 0);
     ASSERT_DEBUG_DEATH({ auto view = a.getSegment(3, 32); }, "");
   }
+
+  // malicious changes, hence the verification root merkle hash will not match
+  // the hash kept in enclave
   {
-    auto& f = AuthBufferStore::lookup_table.at(0)._content[32];
-    auto before = f;
-    f = 47;
+    auto& ref = AuthBufferStore::lookup_table.at(0)._content[32];
+    auto before = ref;
+    ref = 47;
     // should throw because will not match the root sha that is kept in enclave.
     EXPECT_ANY_THROW({ auto view = a.getSegment(8, 11); });
-    f = before;
+    ref = before;
+    // should not throw
     { auto view = a.getSegment(8, 11); }
   }
   {
@@ -109,7 +124,7 @@ TEST(SgxAuthBufferFloatCalculationTest,
     // loading the snapshot 1
     a.loadSnapshot(SnapshotMeta{1});
 
-    // messing with snapshot two and expecting failure
+    // malicious changes: messing with snapshot two and expecting failure
     {
       auto& ref =
           AuthBufferStore::lookup_snapshot_table[0].at({2})._inner._content[32];
