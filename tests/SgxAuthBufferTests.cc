@@ -1,9 +1,9 @@
 #include <BufferStore.h>
-#include <SgxAuthBuffer.h>
 #include <bridge.h>
 #include <gtest/gtest-death-test.h>
 #include <gtest/gtest.h>
 
+#include <SgxAuthBuffer.hpp>
 #include <cstdint>
 #include <cstring>
 #include <tuple>

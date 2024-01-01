@@ -36,10 +36,6 @@ function(set_project_default_compile_options target)
     endif()
 endfunction()
 
-file(GLOB_RECURSE HEADERS "include/*.h")
-file(GLOB_RECURSE LIB_SOURCES "src/*.cc")
-
-
 add_library(untrusted STATIC 
 ${CMAKE_CURRENT_SOURCE_DIR}/src/BufferStore.cc
 )
@@ -93,7 +89,6 @@ target_link_libraries(
 target_include_directories(
   SgxAuthBufferTests PRIVATE
   include
-  ${HEADERS}
 )
 set_project_default_compile_options(SgxAuthBufferTests)
 

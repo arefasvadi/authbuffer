@@ -3,6 +3,8 @@
 #include <BufferStore.h>
 #include <bridge.h>
 #include <common.h>
+#include <openssl/aes.h>
+#include <openssl/cmac.h>
 #include <openssl/sha.h>
 
 #include <algorithm>
@@ -18,6 +20,11 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+
+typedef struct _CmacContent {
+  Sha256 sha;
+  SnapshotMeta meta;
+} CmacContent;
 
 static inline std::tuple<size_t, size_t, size_t, size_t, size_t, bool>
 calculate_meta(const size_t n_elems, const size_t elem_size,
@@ -83,6 +90,32 @@ static inline std::tuple<Sha256, bool> calculate_sha256(const uint8_t* buff,
     return std::make_tuple(s, success);
   }
   return std::make_tuple(s, success);
+}
+
+static inline std::tuple<Cmac128, bool> calculate_cmac128(
+    const uint8_t* buff, const size_t buff_len) {
+  bool success = true;
+  Cmac128 c;
+  CMAC_CTX* ctx = CMAC_CTX_new();
+  if (!ctx) {
+    success = false;
+  } else {
+    if (CMAC_Init(ctx, cmac_key, CMAC_KEY_SIZE_BYTES, EVP_aes_128_cbc(),
+                  NULL) != 1) {
+      success = false;
+    } else {
+      if (CMAC_Update(ctx, buff, buff_len) != 1) {
+        success = false;
+      } else {
+        size_t result_len = 0;
+        if (CMAC_Final(ctx, c.cmac, &result_len) != 1) {
+          success = false;
+        }
+      }
+    }
+  }
+  CMAC_CTX_free(ctx);
+  return std::make_tuple(c, success);
 }
 
 static inline PulledBlocks pull_blocks(
@@ -476,6 +509,14 @@ struct SgxAuthBuffer : private virtual SgxAuthBufferBase {
 
   const Segment getSegment(const size_t idx) const {
     return const_cast<SgxAuthBuffer<T>*>(this)->getSegment(idx);
+  }
+
+  void saveSnapshot(const SnapshotMeta& meta) {
+    CmacContent a{this->_root_sha, meta};
+    auto [cmac, success] =
+        calculate_cmac128((const uint8_t*)&a, sizeof(CmacContent));
+    assert(success);
+    persist_snapshot(this->_id, meta, (const uint8_t*)&cmac);
   }
 
  private:

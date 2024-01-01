@@ -50,3 +50,6 @@ void pull_raw_blocks_from_buffer_store(AuthBufferStore::Inner &auth_buffer,
 void pull_raw_neighbor_shas_from_buffer_store(
     AuthBufferStore::Inner &auth_buffer, const size_t *neighbor_ids,
     Sha256 *neighbor_shas, const size_t neighbors_len);
+
+void persist_snapshot(const size_t buff_id, const SnapshotMeta &meta,
+                      const uint8_t *cmac);

@@ -2,7 +2,12 @@
 
 #include <boost/format.hpp>
 #include <cassert>
+#include <cstdint>
 #include <cstring>
+#include <utility>
+
+#include "BufferStore.h"
+#include "common.h"
 
 void instantiate_new_buffer(const size_t buff_id, const size_t n_elems,
                             const size_t n_blocks, const size_t elem_size,
@@ -117,4 +122,22 @@ void pull_raw_neighbor_shas_from_buffer_store(
   for (size_t i = 0; i < neighbors_len; ++i) {
     neighbor_shas[i] = auth_buffer._mk_tree[neighbor_ids[i]];
   }
+}
+
+void persist_snapshot(const size_t buff_id, const SnapshotMeta &meta,
+                      const uint8_t *cmac) {
+  if (!AuthBufferStore::keyExists(buff_id, AuthBufferStore::lookup_table)) {
+    throw std::runtime_error(
+        (boost::format("Buffer with id %1% not found.") % buff_id).str());
+  }
+  auto &auth_buffer = AuthBufferStore::lookup_table.at(buff_id);
+  if (!AuthBufferStore::keyExists(buff_id,
+                                  AuthBufferStore::lookup_snapshot_table)) {
+    AuthBufferStore::lookup_snapshot_table[buff_id] = {};
+  }
+  auto &auth_buffer_snapshots =
+      AuthBufferStore::lookup_snapshot_table.at(buff_id);
+  // throws if it exists
+  auth_buffer_snapshots.emplace(
+      std::make_pair(meta, AuthBufferStore::Snapshot{meta, auth_buffer, cmac}));
 }

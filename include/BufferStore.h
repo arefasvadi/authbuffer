@@ -2,10 +2,22 @@
 
 #include <common.h>
 
+#include <boost/container_hash/extensions.hpp>
+#include <boost/functional/hash.hpp>
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
 #include <vector>
+
+struct SnapshotMetaHash {
+  std::size_t operator()(const SnapshotMeta &meta) const {
+    std::size_t seed = 0;
+    boost::hash_combine(seed, meta.ts);
+    return seed;
+  }
+};
+
+bool operator==(const SnapshotMeta &lhs, const SnapshotMeta &rhs);
 
 /**
  * Static helper class
@@ -27,33 +39,26 @@ struct AuthBufferStore {
     explicit Inner(const size_t buff_id, const size_t n_elems,
                    const size_t n_blocks, const size_t elem_size,
                    const size_t block_size_bytes);
-
-   private:
-    inline void setInited() noexcept;
-
-    inline bool isInited() const noexcept;
   };
 
   struct Snapshot {
-    struct Meta {
-      const size_t ts{};
-    };
     Inner _inner;
+    SnapshotMeta _meta;
     Cmac128 _root_cmac{};
-    const Meta _meta{};
-    explicit Snapshot(const Meta meta, const Inner &inner, uint8_t *root_cmac);
+    explicit Snapshot(SnapshotMeta meta, const Inner &inner,
+                      const uint8_t *root_cmac);
   };
 
-  template <typename Tv>
-  using TLookUp = std::unordered_map<size_t, Tv>;
+  using TLookUpTable = std::unordered_map<size_t, Inner>;
+  using TSnapshotTableValue =
+      std::unordered_map<SnapshotMeta, Snapshot, SnapshotMetaHash>;
+  using TSnapshotTable = std::unordered_map<size_t, TSnapshotTableValue>;
 
-  using TLookUpTable = TLookUp<Inner>;
-  using TSnapshotTable = TLookUp<std::vector<Snapshot>>;
+  static bool keyExists(const size_t &key, const TLookUpTable &t);
 
-  template <typename Tv>
-  inline static bool keyExists(size_t key, const TLookUp<Tv> &t) noexcept {
-    return t.count(key) != 0;
-  }
+  static bool keyExists(const size_t &key, const TSnapshotTable &t);
+
+  static bool keyExists(const SnapshotMeta &key, const TSnapshotTableValue &t);
 
   static TLookUpTable lookup_table;
   static TSnapshotTable lookup_snapshot_table;

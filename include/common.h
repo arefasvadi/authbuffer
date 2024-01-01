@@ -29,3 +29,9 @@ typedef struct _PushedBlocks {
   std::vector<Sha256> updated_shas;
   std::vector<uint8_t> updated_blocks;
 } PushedBlocks;
+
+typedef struct _SnapshotMeta {
+  size_t ts;
+} SnapshotMeta;
+
+extern uint8_t cmac_key[CMAC_KEY_SIZE_BYTES];
